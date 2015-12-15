@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+
+set -e
+
+: ${WEBSERVER_ENVIRONMENT:='production'}
+: ${WEBSERVER_THREAD_MIN:='0'}
+: ${WEBSERVER_THREAD_MAX:='16'}
+: ${WEBSERVER_WORKERS:='0'}
+: ${WEBSERVER_PRELOAD_APP:='false'}
+: ${WEBSERVER_QUIET:='false'}
+: ${WEBSERVER_WORKER_TIMEOUT:='60'}
+: ${WEBSERVER_WORKER_BOOT_TIMEOUT:='60'}
+: ${WEBSERVER_ADDRESS:='0.0.0.0'}
+: ${WEBSERVER_PORT:='9292'}
+
+RACKUP_FILE="${GEMINABOX_CONF}/config.ru"
+
+tee "${GEMINABOX_CONF}/puma.rb" > /dev/null <<EOF
+bind                'tcp://${WEBSERVER_ADDRESS}:${WEBSERVER_PORT}'
+environment         '${WEBSERVER_ENVIRONMENT}'
+rackup              '${GEMINABOX_CONF}/config.ru'
+tag                 'geminabox'
+threads             ${WEBSERVER_THREAD_MIN}, ${WEBSERVER_THREAD_MAX}
+worker_timeout      ${WEBSERVER_WORKER_TIMEOUT}
+worker_boot_timeout ${WEBSERVER_WORKER_BOOT_TIMEOUT}
+workers             ${WEBSERVER_WORKERS}
+EOF
+
+if [[ $WEBSERVER_PRELOAD_APP == true ]]; then
+  echo 'preload_app!' >> "${GEMINABOX_CONF}/puma.rb"
+fi
+
+if [[ $WEBSERVER_QUIET == true ]]; then
+  echo 'quiet' >> "${GEMINABOX_CONF}/puma.rb"
+fi
+
+chmod 0600 "${GEMINABOX_CONF}/puma.rb"
+
+cat "${GEMINABOX_CONF}/puma.rb"

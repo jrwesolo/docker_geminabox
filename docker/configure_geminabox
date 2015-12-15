@@ -1,0 +1,96 @@
+#!/usr/bin/env bash
+
+set -e
+
+: ${GEMINABOX_BUILD_LEGACY:='false'}
+: ${GEMINABOX_RUBYGEMS_PROXY:='false'}
+: ${GEMINABOX_ALLOW_REMOTE_FAILURE:='false'}
+: ${GEMINABOX_AUTH_USER:='admin'}
+: ${GEMINABOX_AUTH_PASSWORD:=''}
+: ${GEMINABOX_AUTH_WRITE_ONLY:='false'}
+
+alt_public="${GEMINABOX_CONF}/alt/public"
+alt_views="${GEMINABOX_CONF}/alt/views"
+
+tee "${GEMINABOX_CONF}/config.ru" > /dev/null <<EOF
+require 'rubygems'
+require 'geminabox'
+require 'tilt/erb'
+
+EOF
+
+[[ -d $alt_public ]] && echo "Geminabox.public_folder = '$alt_public'" >> "${GEMINABOX_CONF}/config.ru"
+[[ -d $alt_views ]] && echo "Geminabox.views = '$alt_views'" >> "${GEMINABOX_CONF}/config.ru"
+
+tee -a "${GEMINABOX_CONF}/config.ru" > /dev/null <<EOF
+Geminabox.data = '${GEMINABOX_DATA}'
+Geminabox.build_legacy = ${GEMINABOX_BUILD_LEGACY}
+Geminabox.rubygems_proxy = ${GEMINABOX_RUBYGEMS_PROXY}
+Geminabox.allow_remote_failure = ${GEMINABOX_ALLOW_REMOTE_FAILURE}
+
+EOF
+
+if [[ $GEMINABOX_AUTH_PASSWORD ]]; then
+  if [[ $GEMINABOX_AUTH_WRITE_ONLY == true ]]; then
+    tee -a "${GEMINABOX_CONF}/config.ru" > /dev/null <<EOF
+Geminabox::Server.helpers do
+  def protected!
+    unless authorized?
+      response['WWW-Authenticate'] = %(Basic realm="Geminabox")
+      halt 401, "No pushing or deleting without auth.\n"
+    end
+  end
+
+  def authorized?
+    @auth ||=  Rack::Auth::Basic::Request.new(request.env)
+    @auth.provided? && @auth.basic? && @auth.credentials && @auth.credentials == ['${GEMINABOX_AUTH_USER}', '${GEMINABOX_AUTH_PASSWORD}']
+  end
+end
+
+Geminabox::Server.before '/upload' do
+  protected!
+end
+
+Geminabox::Server.before do
+  protected! if request.delete?
+end
+
+Geminabox::Server.before '/api/v1/gems' do
+  unless env['HTTP_AUTHORIZATION'] == 'API_KEY'
+    halt 401, "Access Denied. Api_key invalid or missing.\n"
+  end
+end
+
+EOF
+  else
+    tee -a "${GEMINABOX_CONF}/config.ru" > /dev/null <<EOF
+use Rack::Auth::Basic, "GemInAbox" do |username, password|
+  username == '${GEMINABOX_AUTH_USER}'
+  password == '${GEMINABOX_AUTH_PASSWORD}'
+end
+
+EOF
+  fi
+fi
+
+echo 'run Geminabox::Server' >> "${GEMINABOX_CONF}/config.ru"
+
+chmod 0600 "${GEMINABOX_CONF}/config.ru"
+
+cat <<EOF
+Config file: ${GEMINABOX_CONF}/config.ru
+Data Directory: ${GEMINABOX_DATA}
+Build Legacy: ${GEMINABOX_BUILD_LEGACY}
+RubyGems Proxy: ${GEMINABOX_RUBYGEMS_PROXY}
+Allow Remote Failure: ${GEMINABOX_ALLOW_REMOTE_FAILURE}
+EOF
+
+if [[ $GEMINABOX_AUTH_PASSWORD ]]; then
+  if [[ $GEMINABOX_AUTH_WRITE_ONLY == true ]]; then
+    echo 'Authentication: true (only updates and deletes)'
+  else
+    echo 'Authentication: true'
+  fi
+else
+  echo 'Authentication: false'
+fi
